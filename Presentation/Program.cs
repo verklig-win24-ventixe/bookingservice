@@ -1,4 +1,6 @@
-using System.Text;
+using System.Security.Cryptography;
+using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -12,10 +14,20 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddDbContext<DataContext>(x => x.UseSqlServer(builder.Configuration.GetConnectionString("SqlConnection")));
+var keyVaultUrl = "https://verklig-ventixe-keyvault.vault.azure.net/";
+builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), new DefaultAzureCredential());
 
-builder.Services.AddScoped<IBookingRepository, BookingRepository>();
-builder.Services.AddScoped<IBookingService, BookingService>();
+var client = new SecretClient(new Uri(keyVaultUrl), new DefaultAzureCredential());
+KeyVaultSecret dbSecret = await client.GetSecretAsync("DbConnectionString-Ventixe");
+KeyVaultSecret jwtKeySecret = await client.GetSecretAsync("JwtPublicKey");
+
+builder.Services.AddDbContext<DataContext>(x => x.UseSqlServer(dbSecret.Value));
+
+var rsa = RSA.Create();
+rsa.ImportFromPem(jwtKeySecret.Value.ToCharArray());
+
+var issuer = builder.Configuration["JwtIssuer"];
+var audience = builder.Configuration["JwtAudience"];
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
@@ -25,11 +37,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     ValidateAudience = true,
     ValidateLifetime = true,
     ValidateIssuerSigningKey = true,
-    ValidIssuer = builder.Configuration["Jwt:Issuer"],
-    ValidAudience = builder.Configuration["Jwt:Issuer"],
-    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
+    ValidIssuer = issuer,
+    ValidAudience = audience,
+    IssuerSigningKey = new RsaSecurityKey(rsa)
   };
 });
+
+builder.Services.AddScoped<IBookingRepository, BookingRepository>();
+builder.Services.AddScoped<IBookingService, BookingService>();
 
 var app = builder.Build();
 app.MapOpenApi();
