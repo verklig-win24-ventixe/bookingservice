@@ -20,14 +20,15 @@ builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), new DefaultAzureCre
 var client = new SecretClient(new Uri(keyVaultUrl), new DefaultAzureCredential());
 KeyVaultSecret dbSecret = await client.GetSecretAsync("DbConnectionString-Ventixe");
 KeyVaultSecret jwtKeySecret = await client.GetSecretAsync("JwtPublicKey");
+KeyVaultSecret issuerSecret = await client.GetSecretAsync("JwtIssuer");
+KeyVaultSecret audienceSecret = await client.GetSecretAsync("JwtAudience");
 
 builder.Services.AddDbContext<DataContext>(x => x.UseSqlServer(dbSecret.Value));
 
 var rsa = RSA.Create();
 rsa.ImportFromPem(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(jwtKeySecret.Value)));
 
-var issuer = builder.Configuration["JwtIssuer"];
-var audience = builder.Configuration["JwtAudience"];
+var signingKey = new RsaSecurityKey(rsa);
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
@@ -37,9 +38,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     ValidateAudience = true,
     ValidateLifetime = true,
     ValidateIssuerSigningKey = true,
-    ValidIssuer = issuer,
-    ValidAudience = audience,
-    IssuerSigningKey = new RsaSecurityKey(rsa)
+    ValidIssuer = issuerSecret.Value,
+    ValidAudience = audienceSecret.Value,
+    IssuerSigningKey = signingKey
   };
 });
 
